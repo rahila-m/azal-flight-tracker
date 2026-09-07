@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AZAL Uçuş Fiyat Takipçisi</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #0066b2;
+            --primary-dark: #004b85;
+            --bg: #f4f7f9;
+            --card: #ffffff;
+            --text: #2c3e50;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        h1 { margin: 0; color: var(--primary); font-size: 24px; }
+        .card {
+            background: var(--card);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.08);
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) 120px;
+            gap: 12px;
+            align-items: end;
+        }
+        label { font-size: 13px; font-weight: 600; margin-bottom: 4px; display: block; }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 11px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover { background: var(--primary-dark); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid #edf2f7;
+        }
+        th { background: #f8fafc; color: #64748b; font-size: 13px; text-transform: uppercase; }
+        tr:hover { background-color: #f1f5f9; cursor: pointer; }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-target { background: #e0f2fe; color: #0369a1; }
+        .badge-price { background: #dcfce7; color: #15803d; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>✈️ AZAL Uçuş Fiyat Takip Dashboard</h1>
+        <span style="color: #64748b; font-size: 14px;">Canlı Takip Sistemi</span>
+    </header>
+
+    <div class="card">
+        <h3 style="margin-top: 0; margin-bottom: 15px;">➕ Yeni Rota Takibi Ekle</h3>
+        <div class="form-grid">
+            <div>
+                <label>Kalkış (IATA)</label>
+                <input type="text" id="origin" placeholder="GYD" maxlength="3" value="GYD">
+            </div>
+            <div>
+                <label>Varış (IATA)</label>
+                <input type="text" id="destination" placeholder="ADB" maxlength="3" value="ADB">
+            </div>
+            <div>
+                <label>Tarih</label>
+                <input type="date" id="depDate" value="2026-10-20">
+            </div>
+            <div>
+                <label>Hedef Fiyat (AZN)</label>
+                <input type="number" id="targetPrice" placeholder="200" step="0.5">
+            </div>
+            <div>
+                <button onclick="addNewRoute()">Ekle</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-top:0;">📋 Takip Edilen Uçuşlar</h3>
+        <table id="routesTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Rota</th>
+                    <th>Tarih</th>
+                    <th>Hedef Fiyat</th>
+                    <th>Son Fiyat</th>
+                    <th>İşlem</th>
+                </tr>
+            </thead>
+            <tbody id="routesList">
+                <tr><td colspan="6">Yükleniyor...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card" id="chartCard" style="display: none;">
+        <h3 id="chartTitle" style="margin-top:0;">📊 Fiyat Değişim Grafiği</h3>
+        <canvas id="priceChart" height="90"></canvas>
+    </div>
+</div>
+
+<script>
+    let priceChart = null;
+
+    async function loadRoutes() {
+        try {
+            const res = await fetch('/api/routes');
+            const data = await res.json();
+            const tbody = document.getElementById('routesList');
+            tbody.innerHTML = '';
+
+            if (data.routes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6">Henüz takip edilen rota yok.</td></tr>';
+                return;
+            }
+
+            data.routes.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.onclick = () => loadHistory(r.id, `${r.origin} ➔ ${r.destination} (${r.departure_date})`);
+                tr.innerHTML = `
+                    <td>#${r.id}</td>
+                    <td><strong>${r.origin} ➔ ${r.destination}</strong></td>
+                    <td>${r.departure_date}</td>
+                    <td>${r.target_price ? `<span class="badge badge-target">${r.target_price} AZN</span>` : '-'}</td>
+                    <td>${r.latest_price ? `<span class="badge badge-price">${r.latest_price} AZN</span>` : '<span style="color:#94a3b8">Bekleniyor</span>'}</td>
+                    <td><button style="padding: 4px 8px; font-size:12px;" onclick="event.stopPropagation(); loadHistory(${r.id}, '${r.origin} ➔ ${r.destination}')">Grafik</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    async function addNewRoute() {
+        const origin = document.getElementById('origin').value.trim().toUpperCase();
+        const destination = document.getElementById('destination').value.trim().toUpperCase();
+        const departure_date = document.getElementById('depDate').value;
+        const targetPriceVal = document.getElementById('targetPrice').value;
+        const target_price = targetPriceVal ? parseFloat(targetPriceVal) : null;
+
+        if (!origin || !destination || !departure_date) {
+            alert('Lütfen kalkış, varış ve tarih alanlarını doldurun.');
+            return;
+        }
+
+        const res = await fetch('/api/routes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin, destination, departure_date, target_price })
+        });
+
+        if (res.ok) {
+            loadRoutes();
+        } else {
+            const err = await res.json();
+            alert('Hata: ' + (err.detail || 'Rota eklenemedi'));
+        }
+    }
+
+    async function loadHistory(routeId, title) {
+        try {
+            const res = await fetch(`/api/routes/${routeId}/history`);
+            if (!res.ok) {
+                alert('Bu rota için henüz geçmiş fiyat verisi yok.');
+                return;
+            }
+            const data = await res.json();
+            const labels = data.history.map(item => item.recorded_at.substring(5, 16));
+            const prices = data.history.map(item => item.price);
+
+            document.getElementById('chartCard').style.display = 'block';
+            document.getElementById('chartTitle').innerText = `📊 Fiyat Geçmişi: ${title}`;
+
+            if (priceChart) priceChart.destroy();
+
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Fiyat (AZN)',
+                        data: prices,
+                        borderColor: '#0066b2',
+                        backgroundColor: 'rgba(0, 102, 178, 0.1)',
+                        fill: true,
+                        tension: 0.2,
+                        pointRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: false }
+                    }
+                }
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    loadRoutes();
+</script>
+</body>
+</html>
